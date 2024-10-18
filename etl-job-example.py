@@ -1,4 +1,5 @@
 import sys
+import boto3
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
@@ -18,8 +19,18 @@ job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
 # S3 bucket parameters
-source_bucket = args['source_bucket']  # e.g., 's3://my-raw-bucket/'
-target_bucket = args['target_bucket']  # e.g., 's3://my-discovery-bucket/'
+source_bucket = args['source_bucket']  # e.g., 'my-raw-bucket'
+target_bucket = args['target_bucket']  # e.g., 'my-discovery-bucket'
+
+# Initialize Boto3 S3 client
+s3 = boto3.client('s3')
+
+# Function to list folders (tables) in the source S3 bucket
+def list_s3_folders(bucket_name):
+    response = s3.list_objects_v2(Bucket=bucket_name, Delimiter='/')
+    if 'CommonPrefixes' in response:
+        return [prefix['Prefix'].strip('/') for prefix in response['CommonPrefixes']]
+    return []
 
 # Recursive read function to process folders
 def process_table_folders(input_path, output_path):
@@ -30,7 +41,7 @@ def process_table_folders(input_path, output_path):
             "paths": [input_path],
             "recurse": True
         },
-        format="csv", # assuming source files are CSV; change format if needed
+        format="csv",  # assuming source files are CSV; change format if needed
         format_options={"withHeader": True}
     )
     
@@ -47,14 +58,12 @@ def process_table_folders(input_path, output_path):
     df.write.mode("overwrite").parquet(output_path)
 
 # List all folders (tables) in the source S3 bucket
-input_folders = spark._jsc.hadoopConfiguration().listStatus(spark._jsc.hadoopConfiguration().getURI(source_bucket))
+input_folders = list_s3_folders(source_bucket)
 
-for folder in input_folders:
-    folder_name = folder.getPath().getName()  # Extract folder name (table name)
-    
+for folder_name in input_folders:
     # Construct paths for source and destination folders
-    input_path = f"{source_bucket}/{folder_name}/"
-    output_path = f"{target_bucket}/{folder_name}/"
+    input_path = f"s3://{source_bucket}/{folder_name}/"
+    output_path = f"s3://{target_bucket}/{folder_name}/"
     
     print(f"Processing folder: {folder_name}")
     
